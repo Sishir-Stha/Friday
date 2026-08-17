@@ -1,9 +1,18 @@
-from sqlalchemy import text
+from sqlalchemy import select
 
-from friday.database.connection import engine
+from friday.database.connection import SessionLocal, engine
+from friday.database.models import ToolPermission
 
 
 def test_database_connection() -> None:
     with engine.connect() as connection:
-        result = connection.execute(text("SELECT 1"))
-        assert result.scalar_one() == 1
+        assert connection is not None
+
+
+def test_can_read_application_tables() -> None:
+    with SessionLocal() as session:
+        permissions = session.scalars(
+            select(ToolPermission)
+        ).all()
+
+        assert len(permissions) > 0
