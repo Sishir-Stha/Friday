@@ -1,17 +1,15 @@
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import pool
+from sqlalchemy import create_engine, pool
 from sqlalchemy.engine import Connection
-from sqlalchemy import create_engine
 
 from friday.core.config import get_settings
-from friday.database.connection import Base
 
 # Important:
 # importing models registers all tables with Base.metadata
 from friday.database import models  # noqa: F401
-
+from friday.database.connection import Base
 
 config = context.config
 
@@ -25,9 +23,7 @@ target_metadata = Base.metadata
 def run_migrations_offline() -> None:
     settings = get_settings()
 
-    database_url = settings.database_url.render_as_string(
-        hide_password=False
-    )
+    database_url = settings.database_url.render_as_string(hide_password=False)
 
     context.configure(
         url=database_url,

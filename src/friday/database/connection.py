@@ -3,7 +3,6 @@ from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from friday.core.config import get_settings
 
-
 settings = get_settings()
 
 
