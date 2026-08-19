@@ -1,4 +1,8 @@
+import pytest
+
 from friday.llm.ollama_client import OllamaClient
+
+pytestmark = pytest.mark.integration
 
 
 def test_ollama_available() -> None:
@@ -20,9 +24,6 @@ def test_ollama_chat() -> None:
     )
 
     assert response.content.strip() == "Friday AI connected"
-
-    print("\n===== FRIDAY THINKING =====")
-    print(response.thinking)
 
     print("\n===== FRIDAY ANSWER =====")
     print(response.content)

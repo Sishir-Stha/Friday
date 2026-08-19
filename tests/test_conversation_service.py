@@ -1,8 +1,11 @@
+import pytest
 from sqlalchemy import delete, select
 
 from friday.database.connection import SessionLocal
 from friday.database.models import Conversation, Message
 from friday.llm.conversation_service import ConversationService
+
+pytestmark = pytest.mark.integration
 
 
 def test_conversation_service() -> None:
@@ -18,18 +21,10 @@ def test_conversation_service() -> None:
             "Reply with exactly: Conversation pipeline working",
         )
 
-        print("\n===== FRIDAY THINKING =====")
-        print(response.thinking)
-
         print("\n===== FRIDAY ANSWER =====")
         print(response.content)
 
-        assert response.content.strip()
-
-        assert (
-            "Conversation pipeline working"
-            in response.content
-        )
+        assert response.content == "Conversation pipeline working"
 
         with SessionLocal() as session:
             messages = list(
@@ -48,15 +43,9 @@ def test_conversation_service() -> None:
         assert messages[0].role == "user"
         assert messages[1].role == "assistant"
 
-        assert messages[1].content.strip()
+        assert messages[1].content == "Conversation pipeline working"
 
-        assert (
-            "Conversation pipeline working"
-            in messages[1].content
-        )
-
-        assert "thinking" in messages[1].metadata_json
-        assert messages[1].metadata_json["thinking"]
+        assert messages[1].metadata_json == {}
 
     finally:
         with SessionLocal() as session:

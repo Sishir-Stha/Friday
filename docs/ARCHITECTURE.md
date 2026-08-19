@@ -1,0 +1,83 @@
+# Friday architecture
+
+Friday is a local-first desktop assistant. Its current local conversation path is:
+
+```text
+Windows
+  -> Ollama background server
+  -> http://127.0.0.1:11434
+  -> Friday OllamaClient
+  -> ConversationService
+  -> PostgreSQL
+```
+
+`OllamaClient` owns HTTP communication with Ollama. `ConversationService` owns
+conversation history and persistence. PostgreSQL is the durable source of
+conversation and message data.
+
+## Ollama health and failures
+
+`OllamaClient.health_check()` sends `GET /api/version` with a short timeout. This
+endpoint checks the server without loading a model. It is suitable for Friday
+startup, status displays, diagnostics, and explicit availability checks.
+
+The health check is deliberately not sent before every chat request. Each
+`chat()` and `chat_stream()` request handles connection, timeout, HTTP, and
+response-format failures independently, because Ollama can become unavailable
+after an earlier health check.
+
+Ollama failures use a small domain-specific exception hierarchy:
+
+- `OllamaError` is the base exception.
+- `OllamaUnavailableError` represents connection and transport failures.
+- `OllamaTimeoutError` represents connection, read, and other HTTP timeouts.
+- `OllamaResponseError` represents HTTP errors and malformed or incomplete
+  Ollama responses.
+
+The exception message is safe to surface later in a desktop UI. The endpoint,
+HTTP status when present, and a bounded diagnostic detail are retained on the
+exception for logging.
+
+## Conversation modes
+
+The non-streaming path remains `ConversationService.send_message()`. It saves the
+user message once, calls `OllamaClient.chat()` with `stream=false`, then saves one
+complete assistant message.
+
+The progressive path is `ConversationService.send_message_stream()`. It saves
+the user message once and returns an iterator of visible assistant text chunks.
+`OllamaClient.chat_stream()` calls `/api/chat` with `stream=true`, ignores empty
+content, and stops only on Ollama's completion marker.
+
+Friday disables model reasoning/thinking output by default. Internal model
+reasoning is neither displayed nor persisted. Only final assistant content is
+used. This reduces unnecessary generation, latency, memory/CPU usage, UI clutter,
+and database growth. Both chat modes send `think=false`; if Ollama nevertheless
+returns a `thinking` field, Friday ignores it.
+
+The service accumulates streamed content while yielding it. Only after successful
+completion does it save one complete assistant message. If generation fails or
+the consumer closes the iterator early, Friday does not save a partial response
+as a completed assistant message. The streaming HTTP response and client are
+closed by context managers.
+
+## Windows startup
+
+Ollama is currently enabled under:
+
+```text
+Task Manager -> Startup apps -> Ollama -> Enabled
+```
+
+This starts the Ollama server with Windows. Friday itself is not yet configured
+to launch automatically with Windows.
+
+## RAM and model lifetime
+
+The Ollama server may remain running in the background, but a running server does
+not mean an LLM is permanently loaded in RAM. Ollama normally keeps a recently
+used model loaded temporarily and later unloads it according to its default
+keep-alive behavior.
+
+Friday leaves that default unchanged. It is intentionally designed not to keep
+the model in RAM permanently. Do not configure `keep_alive=-1` at this stage.

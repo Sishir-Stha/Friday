@@ -1,7 +1,10 @@
+import pytest
 from sqlalchemy import select
 
 from friday.database.connection import SessionLocal, engine
 from friday.database.models import ToolPermission
+
+pytestmark = pytest.mark.integration
 
 
 def test_database_connection() -> None:

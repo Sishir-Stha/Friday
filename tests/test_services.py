@@ -1,8 +1,11 @@
+import pytest
 from sqlalchemy import delete, select
 
 from friday.database.connection import SessionLocal
 from friday.database.models import Conversation, Message
 from friday.llm.conversation_service import ConversationService
+
+pytestmark = pytest.mark.integration
 
 
 def test_conversation_service() -> None:
@@ -18,7 +21,7 @@ def test_conversation_service() -> None:
             "Reply with exactly: Conversation pipeline working",
         )
 
-        assert response.strip() == "Conversation pipeline working"
+        assert response.content.strip() == "Conversation pipeline working"
 
         with SessionLocal() as session:
             messages = list(
@@ -38,7 +41,7 @@ def test_conversation_service() -> None:
         assert messages[1].role == "assistant"
 
         print("\nFriday response:")
-        print(response)
+        print(response.content)
 
     finally:
         with SessionLocal() as session:
