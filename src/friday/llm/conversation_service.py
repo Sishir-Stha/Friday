@@ -4,8 +4,13 @@ from typing import Protocol
 from friday.core.config import get_settings
 from friday.database.connection import SessionLocal
 from friday.database.repositories import ConversationRepository
-from friday.llm.ollama_client import OllamaClient, OllamaResponse
+from friday.llm.ollama_client import (
+    OllamaClient,
+    OllamaResponse,
+    OllamaUnavailableError,
+)
 from friday.llm.prompts import FRIDAY_SYSTEM_PROMPT
+from friday.services.assistant_state import AssistantState, AssistantStateMachine
 
 
 class ConversationSettings(Protocol):
@@ -19,9 +24,15 @@ class ConversationService:
         *,
         ollama: OllamaClient | None = None,
         settings: ConversationSettings | None = None,
+        state_machine: AssistantStateMachine | None = None,
     ) -> None:
         self.ollama = ollama if ollama is not None else OllamaClient()
         self.settings = settings if settings is not None else get_settings()
+        self.state_machine = (
+            state_machine
+            if state_machine is not None
+            else AssistantStateMachine()
+        )
 
     def create_conversation(
         self,
@@ -45,20 +56,38 @@ class ConversationService:
         content: str,
     ) -> OllamaResponse:
         content = self._validate_content(content)
-        self._persist_user_message(conversation_id, content)
-
-        messages = self._build_llm_messages(
-            conversation_id,
+        self.state_machine.transition(
+            AssistantState.PROCESSING,
         )
 
-        response = self.ollama.chat(messages)
+        try:
+            self._persist_user_message(conversation_id, content)
 
-        self._persist_assistant_message(
-            conversation_id,
-            response.content,
-        )
+            messages = self._build_llm_messages(
+                conversation_id,
+            )
 
-        return response
+            response = self.ollama.chat(messages)
+
+            self._persist_assistant_message(
+                conversation_id,
+                response.content,
+            )
+        except OllamaUnavailableError:
+            self.state_machine.transition(
+                AssistantState.OFFLINE,
+            )
+            raise
+        except Exception:
+            self.state_machine.transition(
+                AssistantState.ERROR,
+            )
+            raise
+        else:
+            self.state_machine.transition(
+                AssistantState.IDLE,
+            )
+            return response
 
     def send_message_stream(
         self,
@@ -67,9 +96,24 @@ class ConversationService:
     ) -> Iterator[str]:
         """Return an iterator of chunks and persist one completed response."""
         content = self._validate_content(content)
-        self._persist_user_message(conversation_id, content)
+        self.state_machine.transition(
+            AssistantState.PROCESSING,
+        )
 
-        messages = self._build_llm_messages(conversation_id)
+        try:
+            self._persist_user_message(conversation_id, content)
+
+            messages = self._build_llm_messages(conversation_id)
+        except OllamaUnavailableError:
+            self.state_machine.transition(
+                AssistantState.OFFLINE,
+            )
+            raise
+        except Exception:
+            self.state_machine.transition(
+                AssistantState.ERROR,
+            )
+            raise
 
         return self._stream_and_persist(
             conversation_id,
@@ -81,23 +125,46 @@ class ConversationService:
         conversation_id: int,
         messages: list[dict[str, str]],
     ) -> Iterator[str]:
+        self.state_machine.transition(
+            AssistantState.STREAMING,
+        )
         chunks: list[str] = []
 
-        for chunk in self.ollama.chat_stream(messages):
-            if not chunk:
-                continue
+        try:
+            for chunk in self.ollama.chat_stream(messages):
+                if not chunk:
+                    continue
 
-            chunks.append(chunk)
-            yield chunk
+                chunks.append(chunk)
+                yield chunk
 
-        complete_content = "".join(chunks)
-        if not complete_content.strip():
-            raise ValueError("Ollama completed without assistant content.")
+            complete_content = "".join(chunks)
+            if not complete_content.strip():
+                raise ValueError("Ollama completed without assistant content.")
 
-        self._persist_assistant_message(
-            conversation_id,
-            complete_content,
-        )
+            self._persist_assistant_message(
+                conversation_id,
+                complete_content,
+            )
+        except GeneratorExit:
+            self.state_machine.transition(
+                AssistantState.IDLE,
+            )
+            raise
+        except OllamaUnavailableError:
+            self.state_machine.transition(
+                AssistantState.OFFLINE,
+            )
+            raise
+        except Exception:
+            self.state_machine.transition(
+                AssistantState.ERROR,
+            )
+            raise
+        else:
+            self.state_machine.transition(
+                AssistantState.IDLE,
+            )
 
     @staticmethod
     def _validate_content(content: str) -> str:

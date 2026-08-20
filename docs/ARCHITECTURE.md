@@ -79,9 +79,20 @@ Friday has an Assistant State Machine foundation with these states: `IDLE`,
 and `ERROR`. An explicit transition map prevents invalid runtime state changes,
 while same-state updates are idempotent.
 
-Assistant state is currently in-memory only. It will later coordinate
-`ConversationService`, the desktop UI, voice, tool execution, and Ollama
-connectivity; those integrations do not exist yet.
+`ConversationService` now drives conversation runtime state through these flows:
+
+```text
+Normal:              IDLE -> PROCESSING -> IDLE
+Streaming:           IDLE -> PROCESSING -> STREAMING -> IDLE
+Ollama unavailable:  PROCESSING/STREAMING -> OFFLINE
+Other failure:       PROCESSING/STREAMING -> ERROR
+Stream cancellation: STREAMING -> IDLE
+```
+
+The `OFFLINE` and `ERROR` states remain observable until a later recovery layer
+changes them. Assistant state is still in-memory only. Future integrations will
+coordinate the desktop UI, voice, tool execution, and broader Ollama connectivity;
+those integrations do not exist yet.
 
 ## Windows startup
 
