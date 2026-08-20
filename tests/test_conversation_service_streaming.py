@@ -93,6 +93,16 @@ class FailingStreamingOllama:
         )
 
 
+class EmptyMemoryService:
+    def recall(
+        self,
+        *,
+        limit: int = 20,
+        memory_type: str | None = None,
+    ) -> list[object]:
+        return []
+
+
 @pytest.fixture
 def fake_state(monkeypatch: pytest.MonkeyPatch) -> FakeState:
     state = FakeState()
@@ -118,6 +128,7 @@ def make_service(ollama: Any) -> ConversationService:
     return ConversationService(
         ollama=ollama,
         settings=settings,
+        memory_service=EmptyMemoryService(),  # type: ignore[arg-type]
     )
 
 

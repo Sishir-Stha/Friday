@@ -89,8 +89,13 @@ type, content, importance, optional source message, and active status.
 importance and recency. Forgetting is reversible soft deactivation, not physical
 deletion.
 
-Automatic memory extraction is not implemented, and memories are not yet added
-to Ollama prompts. This foundation does not use embeddings or a vector database.
+`ConversationService` reads up to five active memories through `MemoryService`
+for both normal and streaming prompts. Only bounded type and content values are
+included, serialized as untrusted contextual data rather than instructions.
+Memory context is never persisted as a conversation message.
+
+Automatic memory extraction and writing are not implemented. This foundation
+does not use embeddings, vector search, or semantic retrieval.
 
 ## Assistant runtime state
 
