@@ -11,6 +11,7 @@ from friday.llm.ollama_client import (
 )
 from friday.llm.prompts import FRIDAY_SYSTEM_PROMPT
 from friday.services.assistant_state import AssistantState, AssistantStateMachine
+from friday.services.context_manager import ContextManager
 
 
 class ConversationSettings(Protocol):
@@ -25,6 +26,7 @@ class ConversationService:
         ollama: OllamaClient | None = None,
         settings: ConversationSettings | None = None,
         state_machine: AssistantStateMachine | None = None,
+        context_manager: ContextManager | None = None,
     ) -> None:
         self.ollama = ollama if ollama is not None else OllamaClient()
         self.settings = settings if settings is not None else get_settings()
@@ -32,6 +34,11 @@ class ConversationService:
             state_machine
             if state_machine is not None
             else AssistantStateMachine()
+        )
+        self.context_manager = (
+            context_manager
+            if context_manager is not None
+            else ContextManager()
         )
 
     def create_conversation(
@@ -62,6 +69,9 @@ class ConversationService:
 
         try:
             self._persist_user_message(conversation_id, content)
+            self.context_manager.update(
+                current_conversation_id=conversation_id,
+            )
 
             messages = self._build_llm_messages(
                 conversation_id,
@@ -102,6 +112,9 @@ class ConversationService:
 
         try:
             self._persist_user_message(conversation_id, content)
+            self.context_manager.update(
+                current_conversation_id=conversation_id,
+            )
 
             messages = self._build_llm_messages(conversation_id)
         except OllamaUnavailableError:

@@ -69,8 +69,16 @@ conversation, and recent tool result. This will support contextual references in
 future integrations without coupling the state container to the LLM, UI, or
 operating system.
 
+After `ConversationService` successfully persists a user message, it records the
+request's `current_conversation_id` in the Context Manager. The active
+conversation remains set after successful completion, during `ERROR` or
+`OFFLINE`, and after explicit stream cancellation. Invalid input and nonexistent
+conversations do not replace an existing valid conversation context because the
+update occurs only after user-message persistence succeeds. Other context fields
+are preserved.
+
 Context Manager state is currently in-memory only and is not persisted to
-PostgreSQL.
+PostgreSQL. It is not yet injected into LLM prompts.
 
 ## Assistant runtime state
 
