@@ -14,7 +14,7 @@ class Settings(BaseSettings):
 
     # Local AI / Ollama
     ollama_base_url: str = "http://127.0.0.1:11434"
-    ollama_model: str = "qwen3:8b"
+    ollama_model: str = "qwen2.5:3b"
 
     # Friday behaviour
     ai_mode: str = "local"

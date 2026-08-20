@@ -160,8 +160,6 @@ class OllamaClient:
         endpoint = f"{self.base_url}/api/chat"
         payload = self._chat_payload(messages, stream=True)
         received_visible_content = False
-        guard_embedded_thinking = self.model.casefold().startswith("qwen3")
-        guarded_content = ""
 
         try:
             with (
@@ -239,35 +237,12 @@ class OllamaClient:
                                 ),
                             )
 
-                        if content and guard_embedded_thinking:
-                            guarded_content += content
-                            closing_tag = "</think>"
-                            closing_index = guarded_content.lower().rfind(
-                                closing_tag
-                            )
-                            if closing_index < 0:
-                                content = ""
-                            else:
-                                content = guarded_content[
-                                    closing_index + len(closing_tag) :
-                                ].lstrip()
-                                guarded_content = ""
-                                guard_embedded_thinking = False
-
                         if content:
                             if content.strip():
                                 received_visible_content = True
                             yield content
 
                     if done:
-                        if guard_embedded_thinking and guarded_content:
-                            content = self._strip_embedded_thinking(
-                                guarded_content
-                            )
-                            if content:
-                                received_visible_content = True
-                                yield content
-
                         if not received_visible_content:
                             raise OllamaResponseError(
                                 "The local AI service returned no assistant content.",

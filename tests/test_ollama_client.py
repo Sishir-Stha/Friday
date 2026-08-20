@@ -183,30 +183,6 @@ def test_chat_stream_combines_chunks_and_ignores_empty_content() -> None:
     assert all("ignored" not in chunk for chunk in streamed_chunks)
 
 
-def test_chat_stream_removes_qwen_embedded_thinking_preamble() -> None:
-    chunks = [
-        {"message": {"content": "private reason"}, "done": False},
-        {"message": {"content": "ing</thi"}, "done": False},
-        {"message": {"content": "nk>\n\nHel"}, "done": False},
-        {"message": {"content": "lo"}, "done": False},
-        {"message": {"content": ""}, "done": True},
-    ]
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        content = "\n".join(json.dumps(chunk) for chunk in chunks)
-        return httpx.Response(200, content=content)
-
-    client = make_client(
-        httpx.MockTransport(handler),
-        model="qwen3:4b",
-    )
-
-    streamed_chunks = list(client.chat_stream(MESSAGES))
-
-    assert streamed_chunks == ["Hel", "lo"]
-    assert "".join(streamed_chunks) == "Hello"
-
-
 def test_chat_stream_connection_failure_uses_domain_exception() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("Connection refused", request=request)

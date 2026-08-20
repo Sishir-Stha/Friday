@@ -65,9 +65,34 @@ Conversation pipeline working
 PASSED
 ```
 
-## Known hardware issue
+## Verified Windows GPU baseline
 
-Ollama currently falls back to CPU because GPU discovery failed on this Windows
-machine. This does not block Friday functionality, but GPU acceleration
-troubleshooting is still pending and is outside the scope of the current Ollama
-health/error/streaming work.
+The known-good local configuration is:
+
+```text
+Ollama: 0.24.0
+Model: qwen2.5:3b
+GPU: NVIDIA GTX 950M 4 GB
+Inference: 100% GPU verified with ollama ps
+Context: 4096
+```
+
+Ollama 0.32.14 failed during GPU discovery on this machine with Windows error
+`0xc0000005`. Forcing CUDA 12 did not fix it, and Vulkan did not fix it.
+Downgrading to Ollama 0.24.0 restored GPU acceleration. Do not upgrade Ollama
+without verifying GPU acceleration afterward.
+
+Qwen3 was removed because its thinking behavior was undesirable for Friday. The
+current `qwen2.5:3b` path stores user messages and final assistant responses only;
+thinking or reasoning traces are neither displayed nor persisted.
+
+Verify the approved runtime and GPU offload with:
+
+```powershell
+ollama --version
+ollama run qwen2.5:3b "Reply only with: Hello"
+ollama ps
+```
+
+Expected results are Ollama `0.24.0`, a final response of `Hello`, and
+`PROCESSOR = 100% GPU` in `ollama ps`.

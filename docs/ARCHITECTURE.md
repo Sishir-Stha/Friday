@@ -81,3 +81,19 @@ keep-alive behavior.
 
 Friday leaves that default unchanged. It is intentionally designed not to keep
 the model in RAM permanently. Do not configure `keep_alive=-1` at this stage.
+
+## Known-good local AI baseline
+
+The verified Windows configuration is:
+
+```text
+Ollama: 0.24.0
+Model: qwen2.5:3b
+GPU: NVIDIA GTX 950M 4 GB
+Inference: 100% GPU verified with ollama ps
+Context: 4096
+```
+
+Friday stores user messages and final assistant responses only. Thinking or
+reasoning traces are neither displayed nor persisted. Qwen3 was removed because
+its thinking behavior was undesirable for Friday.
