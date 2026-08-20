@@ -61,6 +61,17 @@ the consumer closes the iterator early, Friday does not save a partial response
 as a completed assistant message. The streaming HTTP response and client are
 closed by context managers.
 
+## Runtime context
+
+Friday has a lightweight Context Manager foundation for ephemeral runtime state.
+It can track the active module, active window, selected item, current
+conversation, and recent tool result. This will support contextual references in
+future integrations without coupling the state container to the LLM, UI, or
+operating system.
+
+Context Manager state is currently in-memory only and is not persisted to
+PostgreSQL.
+
 ## Windows startup
 
 Ollama is currently enabled under:
