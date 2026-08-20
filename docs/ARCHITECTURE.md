@@ -72,6 +72,17 @@ operating system.
 Context Manager state is currently in-memory only and is not persisted to
 PostgreSQL.
 
+## Assistant runtime state
+
+Friday has an Assistant State Machine foundation with these states: `IDLE`,
+`LISTENING`, `PROCESSING`, `STREAMING`, `SPEAKING`, `TOOL_RUNNING`, `OFFLINE`,
+and `ERROR`. An explicit transition map prevents invalid runtime state changes,
+while same-state updates are idempotent.
+
+Assistant state is currently in-memory only. It will later coordinate
+`ConversationService`, the desktop UI, voice, tool execution, and Ollama
+connectivity; those integrations do not exist yet.
+
 ## Windows startup
 
 Ollama is currently enabled under:
