@@ -80,6 +80,18 @@ are preserved.
 Context Manager state is currently in-memory only and is not persisted to
 PostgreSQL. It is not yet injected into LLM prompts.
 
+## Long-term memory
+
+Friday uses PostgreSQL for durable long-term memories. Each memory records its
+type, content, importance, optional source message, and active status.
+`MemoryService` provides explicit `remember`, `recall`, `get`, `forget`, and
+`restore` operations. Normal recall returns active memories only, ordered by
+importance and recency. Forgetting is reversible soft deactivation, not physical
+deletion.
+
+Automatic memory extraction is not implemented, and memories are not yet added
+to Ollama prompts. This foundation does not use embeddings or a vector database.
+
 ## Assistant runtime state
 
 Friday has an Assistant State Machine foundation with these states: `IDLE`,

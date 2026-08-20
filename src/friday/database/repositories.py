@@ -3,7 +3,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from friday.database.models import Conversation, Message
+from friday.database.models import Conversation, Memory, Message
 
 
 class ConversationRepository:
@@ -76,3 +76,83 @@ class ConversationRepository:
         messages.reverse()
 
         return messages
+
+
+class MemoryRepository:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def create_memory(
+        self,
+        *,
+        content: str,
+        memory_type: str = "fact",
+        importance: int = 5,
+        source_message_id: int | None = None,
+    ) -> Memory:
+        memory = Memory(
+            content=content,
+            memory_type=memory_type,
+            importance=importance,
+            source_message_id=source_message_id,
+            is_active=True,
+        )
+
+        self.session.add(memory)
+        self.session.flush()
+
+        return memory
+
+    def get_memory(self, memory_id: int) -> Memory | None:
+        return self.session.get(Memory, memory_id)
+
+    def list_active_memories(
+        self,
+        *,
+        limit: int = 20,
+        memory_type: str | None = None,
+    ) -> list[Memory]:
+        statement = select(Memory).where(
+            Memory.is_active.is_(True),
+        )
+
+        if memory_type is not None:
+            statement = statement.where(
+                Memory.memory_type == memory_type,
+            )
+
+        statement = statement.order_by(
+            Memory.importance.desc(),
+            Memory.updated_at.desc(),
+            Memory.id.desc(),
+        ).limit(limit)
+
+        return list(self.session.scalars(statement).all())
+
+    def deactivate_memory(
+        self,
+        memory_id: int,
+    ) -> Memory | None:
+        memory = self.get_memory(memory_id)
+
+        if memory is None:
+            return None
+
+        memory.is_active = False
+        self.session.flush()
+
+        return memory
+
+    def reactivate_memory(
+        self,
+        memory_id: int,
+    ) -> Memory | None:
+        memory = self.get_memory(memory_id)
+
+        if memory is None:
+            return None
+
+        memory.is_active = True
+        self.session.flush()
+
+        return memory
