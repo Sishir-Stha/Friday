@@ -116,8 +116,22 @@ Stream cancellation: STREAMING -> IDLE
 
 The `OFFLINE` and `ERROR` states remain observable until a later recovery layer
 changes them. Assistant state is still in-memory only. Future integrations will
-coordinate the desktop UI, voice, tool execution, and broader Ollama connectivity;
-those integrations do not exist yet.
+coordinate the desktop UI, voice, tool execution, and broader Ollama connectivity.
+The tool metadata foundation described below exists, but execution integrations
+do not.
+
+## Tool registry
+
+Friday has a lightweight in-memory registry for tool metadata. An immutable
+`ToolDefinition` records a stable canonical name, description, category, and a
+`ToolRisk` value of `READ_ONLY`, `MODIFY`, or `DESTRUCTIVE`. Registry instances
+are independent and support deterministic discovery, lookup, registration, and
+removal; duplicate names are rejected.
+
+The registry contains no executable callbacks and does not run tools.
+`PermissionService` is not integrated, and neither `ConversationService` nor
+Ollama can invoke registered tools. Tool definitions are not persisted to
+PostgreSQL.
 
 ## Windows startup
 
