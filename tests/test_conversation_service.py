@@ -21,7 +21,10 @@ def test_conversation_service() -> None:
             "Reply with exactly: Conversation pipeline working",
         )
 
-        assert response.content.strip() == "Conversation pipeline working"
+        print("\n===== FRIDAY ANSWER =====")
+        print(response.content)
+
+        assert response.content == "Conversation pipeline working"
 
         with SessionLocal() as session:
             messages = list(
@@ -40,8 +43,9 @@ def test_conversation_service() -> None:
         assert messages[0].role == "user"
         assert messages[1].role == "assistant"
 
-        print("\nFriday response:")
-        print(response.content)
+        assert messages[1].content == "Conversation pipeline working"
+
+        assert messages[1].metadata_json == {}
 
     finally:
         with SessionLocal() as session:
