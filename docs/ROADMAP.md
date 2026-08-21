@@ -16,15 +16,20 @@ Status: COMPLETE
 
 ## Phase 2 — Safe Tool Execution
 
-Status: IN PROGRESS
+Status: COMPLETE
 
 - [x] PermissionService
 - [x] ToolExecutor
-- [ ] Safe execution state handling across future orchestration
-- [ ] Read-only system tools
-- [ ] CPU/RAM/GPU monitoring
-- [ ] Controlled local tools
-- [ ] LLM tool orchestration
+- [x] Safe execution state handling
+- [x] Read-only system tools
+- [x] CPU/RAM/GPU monitoring
+- [x] Controlled local tools
+- [x] Native read-only LLM tool orchestration
+
+Phase 2 native LLM tool orchestration is non-streaming and exposes READ_ONLY
+tools only. MODIFY tools require explicit caller approval and are not
+model-visible. Streaming tool orchestration and UI-mediated approval are
+deferred, and destructive tools are not implemented.
 
 ## Phase 3 — Desktop Assistant Product
 

@@ -7,10 +7,30 @@ import httpx
 
 from friday.core.config import get_settings
 
+ChatMessage = dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class OllamaToolCall:
+    name: str
+    arguments: dict[str, object]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.name, str) or not self.name.strip():
+            raise ValueError("Tool call name must be a non-empty string.")
+        if not isinstance(self.arguments, dict) or any(
+            not isinstance(key, str) for key in self.arguments
+        ):
+            raise ValueError("Tool call arguments must be an object with string keys.")
+
+        object.__setattr__(self, "name", self.name.strip())
+        object.__setattr__(self, "arguments", dict(self.arguments))
+
 
 @dataclass(frozen=True, slots=True)
 class OllamaResponse:
     content: str
+    tool_calls: tuple[OllamaToolCall, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,10 +129,16 @@ class OllamaClient:
 
     def chat(
         self,
-        messages: list[dict[str, str]],
+        messages: list[ChatMessage],
+        *,
+        tools: list[dict[str, object]] | None = None,
     ) -> OllamaResponse:
         endpoint = f"{self.base_url}/api/chat"
-        payload = self._chat_payload(messages, stream=False)
+        payload = self._chat_payload(
+            messages,
+            stream=False,
+            tools=tools,
+        )
 
         try:
             with self._create_client(timeout=self.CHAT_TIMEOUT) as client:
@@ -132,6 +158,10 @@ class OllamaClient:
                 detail="Response did not contain a 'message' object.",
             )
 
+        tool_calls = self._parse_tool_calls(
+            message,
+            endpoint=endpoint,
+        )
         content = message.get("content")
         if not isinstance(content, str):
             raise OllamaResponseError(
@@ -141,7 +171,7 @@ class OllamaClient:
             )
 
         content = self._strip_embedded_thinking(content)
-        if not content:
+        if not content and not tool_calls:
             raise OllamaResponseError(
                 "The local AI service returned no assistant content.",
                 endpoint=endpoint,
@@ -150,11 +180,12 @@ class OllamaClient:
 
         return OllamaResponse(
             content=content,
+            tool_calls=tool_calls,
         )
 
     def chat_stream(
         self,
-        messages: list[dict[str, str]],
+        messages: list[ChatMessage],
     ) -> Iterator[str]:
         """Yield visible assistant content from a streaming Ollama response."""
         endpoint = f"{self.base_url}/api/chat"
@@ -273,16 +304,97 @@ class OllamaClient:
 
     def _chat_payload(
         self,
-        messages: list[dict[str, str]],
+        messages: list[ChatMessage],
         *,
         stream: bool,
+        tools: list[dict[str, object]] | None = None,
     ) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
             "stream": stream,
             "think": False,
         }
+        if tools:
+            payload["tools"] = tools
+        return payload
+
+    @staticmethod
+    def _parse_tool_calls(
+        message: dict[str, Any],
+        *,
+        endpoint: str,
+    ) -> tuple[OllamaToolCall, ...]:
+        if "tool_calls" not in message:
+            return ()
+
+        raw_calls = message["tool_calls"]
+        if not isinstance(raw_calls, list):
+            raise OllamaResponseError(
+                "The local AI service returned invalid tool calls.",
+                endpoint=endpoint,
+                detail="Assistant 'tool_calls' was not a list.",
+            )
+
+        parsed_calls: list[OllamaToolCall] = []
+        for index, raw_call in enumerate(raw_calls):
+            if not isinstance(raw_call, dict):
+                OllamaClient._raise_invalid_tool_call(
+                    endpoint,
+                    index,
+                    "tool call was not an object",
+                )
+
+            function = raw_call.get("function")
+            if not isinstance(function, dict):
+                OllamaClient._raise_invalid_tool_call(
+                    endpoint,
+                    index,
+                    "function was not an object",
+                )
+
+            name = function.get("name")
+            if not isinstance(name, str) or not name.strip():
+                OllamaClient._raise_invalid_tool_call(
+                    endpoint,
+                    index,
+                    "function name was not a non-empty string",
+                )
+
+            arguments = function.get("arguments")
+            if not isinstance(arguments, dict):
+                OllamaClient._raise_invalid_tool_call(
+                    endpoint,
+                    index,
+                    "function arguments was not an object",
+                )
+            if any(not isinstance(key, str) for key in arguments):
+                OllamaClient._raise_invalid_tool_call(
+                    endpoint,
+                    index,
+                    "function arguments contained a non-string key",
+                )
+
+            parsed_calls.append(
+                OllamaToolCall(
+                    name=name,
+                    arguments=arguments,
+                )
+            )
+
+        return tuple(parsed_calls)
+
+    @staticmethod
+    def _raise_invalid_tool_call(
+        endpoint: str,
+        index: int,
+        detail: str,
+    ) -> NoReturn:
+        raise OllamaResponseError(
+            "The local AI service returned an invalid tool call.",
+            endpoint=endpoint,
+            detail=f"Tool call {index}: {detail}.",
+        )
 
     @staticmethod
     def _ensure_success(

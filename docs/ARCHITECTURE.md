@@ -116,17 +116,16 @@ Stream cancellation: STREAMING -> IDLE
 
 The `OFFLINE` and `ERROR` states remain observable until a later recovery layer
 changes them. Assistant state is still in-memory only. Future integrations will
-coordinate the desktop UI, voice, tool execution, and broader Ollama connectivity.
-The tool metadata foundation described below exists, but execution integrations
-do not.
+coordinate the desktop UI, voice, and broader Ollama connectivity.
 
 ## Tool registry
 
 Friday has a lightweight in-memory registry for tool metadata. An immutable
-`ToolDefinition` records a stable canonical name, description, category, and a
-`ToolRisk` value of `READ_ONLY`, `MODIFY`, or `DESTRUCTIVE`. Registry instances
-are independent and support deterministic discovery, lookup, registration, and
-removal; duplicate names are rejected.
+`ToolDefinition` records a stable canonical name, description, category, a
+`ToolRisk` value of `READ_ONLY`, `MODIFY`, or `DESTRUCTIVE`, and immutable
+parameter metadata. Parameters convert deterministically to native Ollama JSON
+schemas. Registry instances are independent and support deterministic discovery,
+lookup, registration, and removal; duplicate names are rejected.
 
 The registry contains no executable callbacks. Handler bindings live separately
 inside each `ToolExecutor`, preventing metadata lookup from bypassing the
@@ -146,9 +145,76 @@ Successful calls restore the prior allowed state (`IDLE`, `PROCESSING`, or
 `STREAMING`). A handler failure leaves the assistant in `ERROR`, and the original
 handler exception propagates unchanged.
 
-No real operating-system tools exist yet. `ConversationService` and Ollama cannot
-invoke tools, and definitions, bindings, decisions, and results are not persisted
+Definitions, bindings, permission decisions, calls, and results are not persisted
 to PostgreSQL.
+
+## System monitoring
+
+`SystemMonitor` gathers snapshots on demand; it has no sampling thread, timer,
+singleton, or continuous polling. Python and `psutil` provide machine, OS, CPU,
+and RAM data. CPU percentage uses a small bounded sample interval and RAM comes
+from `psutil.virtual_memory()`.
+
+NVIDIA GPU metrics use an installed `nvidia-smi` executable discovered locally
+and a fixed query argument list. The command uses an argv list, a three-second
+timeout, and `shell=False`. Missing NVIDIA tooling, timeouts, command failures,
+or unusable output produce an empty GPU tuple without hiding valid CPU/RAM data.
+Individual unavailable numeric GPU fields remain `None` instead of fabricated
+zero values.
+
+## Built-in tool runtime
+
+`build_default_tool_runtime()` assembles one `ToolRegistry` and `ToolExecutor`
+around the exact injected state machine and optional permission, monitor, and
+launcher dependencies. It registers `get_system_info`, `get_system_metrics`,
+and `list_allowed_apps` as `READ_ONLY`, plus `open_app` as `MODIFY`. Handlers
+remain separate from metadata and return JSON-compatible values.
+
+## Controlled application launcher
+
+`AppLauncher` is a deliberately narrow Windows-only capability. It maps only the
+canonical aliases `calculator`, `file_explorer`, and `notepad` to fixed executable
+names. User or model input can select an allowlist key but cannot supply a path,
+command, arguments, URL, environment expansion, or shell text. Launching uses a
+fixed one-element argv list with `shell=False`.
+
+`open_app` requires explicit per-call approval through `PermissionService`. It is
+registered for direct controlled use but is not visible to the LLM in Phase 2;
+there is no UI yet that can safely suspend a conversation for MODIFY approval.
+
+## Native Ollama tool calling
+
+`OllamaClient.chat()` can send native tool schemas and parse validated tool calls.
+An empty assistant content field is accepted only when valid tool calls exist.
+Thinking remains disabled and ignored. Streaming stays visible-text-only and does
+not receive tool schemas in this phase.
+
+## Conversation tool orchestration
+
+When an optional `ToolRuntime` is injected, non-streaming `send_message()` sends
+only `READ_ONLY` schemas to Ollama. Model requests are checked again against the
+registry and risk before the executor runs them. Successful execution temporarily
+moves `PROCESSING -> TOOL_RUNNING -> PROCESSING`; its JSON result is sent back to
+Ollama as a transient tool message until a final assistant answer is returned.
+
+Tool-call rounds, calls per response, transient result text, and the context
+snapshot are all bounded. The final successful result updates the ephemeral
+`ContextManager.recent_tool_result` while preserving other context fields. Tool
+planner messages, tool results, schemas, system prompts, and runtime state are
+never conversation rows: PostgreSQL stores one user message and one final
+assistant message only.
+
+Phase 2 v1 orchestration intentionally applies only to non-streaming
+`send_message()`. Streaming tool orchestration and UI-mediated MODIFY approval
+are deferred.
+
+## Tool safety boundaries
+
+Only `READ_ONLY` tools are exposed to Ollama. `MODIFY` remains approval-gated,
+`DESTRUCTIVE` remains denied, and no destructive tools exist. There are no
+filesystem, arbitrary command, PowerShell, process-termination, network, or
+automation tools. Production tool code accepts no arbitrary subprocess command
+and uses no `shell=True` or `os.system`.
 
 ## Windows startup
 

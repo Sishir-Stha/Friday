@@ -112,6 +112,7 @@ def test_chat_parses_successful_response() -> None:
         assert request.url.path == "/api/chat"
         assert payload["stream"] is False
         assert payload["think"] is False
+        assert "tools" not in payload
         return httpx.Response(
             200,
             json={
@@ -127,7 +128,155 @@ def test_chat_parses_successful_response() -> None:
     response = client.chat(MESSAGES)
 
     assert response.content == "Friday is ready."
+    assert response.tool_calls == ()
     assert not hasattr(response, "thinking")
+
+
+def test_chat_includes_non_empty_tools_payload() -> None:
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "get_system_info",
+                "description": "Read system information.",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert payload["tools"] == tools
+        assert payload["think"] is False
+        assert payload["stream"] is False
+        return httpx.Response(200, json={"message": {"content": "Done"}})
+
+    client = make_client(httpx.MockTransport(handler))
+
+    assert client.chat(MESSAGES, tools=tools).content == "Done"
+
+
+@pytest.mark.parametrize("tools", [None, []])
+def test_chat_omits_empty_tools_payload(
+    tools: list[dict[str, object]] | None,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert "tools" not in payload
+        return httpx.Response(200, json={"message": {"content": "Done"}})
+
+    client = make_client(httpx.MockTransport(handler))
+
+    client.chat(MESSAGES, tools=tools)
+
+
+def test_chat_parses_single_tool_call_with_empty_content() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "message": {
+                    "content": "",
+                    "thinking": "ignored reasoning",
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "get_system_metrics",
+                                "arguments": {"detail": True},
+                            }
+                        }
+                    ],
+                }
+            },
+        )
+
+    response = make_client(httpx.MockTransport(handler)).chat(MESSAGES)
+
+    assert response.content == ""
+    assert len(response.tool_calls) == 1
+    assert response.tool_calls[0].name == "get_system_metrics"
+    assert response.tool_calls[0].arguments == {"detail": True}
+
+
+def test_chat_parses_multiple_tool_calls() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "message": {
+                    "content": "I will check.",
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "get_system_info",
+                                "arguments": {},
+                            }
+                        },
+                        {
+                            "function": {
+                                "name": "list_allowed_apps",
+                                "arguments": {},
+                            }
+                        },
+                    ],
+                }
+            },
+        )
+
+    response = make_client(httpx.MockTransport(handler)).chat(MESSAGES)
+
+    assert [call.name for call in response.tool_calls] == [
+        "get_system_info",
+        "list_allowed_apps",
+    ]
+
+
+def test_chat_rejects_empty_content_without_tool_call() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"message": {"content": ""}})
+
+    with pytest.raises(OllamaResponseError, match="no assistant content"):
+        make_client(httpx.MockTransport(handler)).chat(MESSAGES)
+
+
+@pytest.mark.parametrize(
+    ("tool_calls", "detail"),
+    [
+        (None, "not a list"),
+        ({}, "not a list"),
+        (["invalid"], "not an object"),
+        ([{}], "function was not an object"),
+        ([{"function": []}], "function was not an object"),
+        ([{"function": {"name": "", "arguments": {}}}], "name"),
+        ([{"function": {"name": "tool", "arguments": []}}], "arguments"),
+    ],
+)
+def test_chat_rejects_malformed_tool_calls(
+    tool_calls: object,
+    detail: str,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "message": {
+                    "content": "",
+                    "tool_calls": tool_calls,
+                }
+            },
+        )
+
+    with pytest.raises(OllamaResponseError) as exc_info:
+        make_client(httpx.MockTransport(handler)).chat(MESSAGES)
+
+    assert detail in (exc_info.value.detail or "")
+
+
+def test_tool_call_model_rejects_non_string_argument_keys() -> None:
+    from friday.llm.ollama_client import OllamaToolCall
+
+    with pytest.raises(ValueError, match="string keys"):
+        OllamaToolCall(name="tool", arguments={1: "value"})  # type: ignore[dict-item]
 
 
 def test_chat_removes_embedded_thinking_preamble() -> None:
