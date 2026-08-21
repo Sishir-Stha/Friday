@@ -118,6 +118,10 @@ The `OFFLINE` and `ERROR` states remain observable until a later recovery layer
 changes them. Assistant state is still in-memory only. Future integrations will
 coordinate the desktop UI, voice, and broader Ollama connectivity.
 
+`AssistantStateMachine` and `ContextManager` protect their in-memory state with
+reentrant locks. Their synchronous APIs and immutable snapshots are therefore
+safe to share among the Qt GUI, chat, monitoring, and notifier worker threads.
+
 ## Tool registry
 
 Friday has a lightweight in-memory registry for tool metadata. An immutable
@@ -179,8 +183,9 @@ command, arguments, URL, environment expansion, or shell text. Launching uses a
 fixed one-element argv list with `shell=False`.
 
 `open_app` requires explicit per-call approval through `PermissionService`. It is
-registered for direct controlled use but is not visible to the LLM in Phase 2;
-there is no UI yet that can safely suspend a conversation for MODIFY approval.
+registered for direct controlled use. The desktop runtime makes it visible to
+the LLM only when its GUI approval bridge is installed; headless/default service
+composition continues to expose read-only tools only.
 
 ## Native Ollama tool calling
 
@@ -192,10 +197,20 @@ not receive tool schemas in this phase.
 ## Conversation tool orchestration
 
 When an optional `ToolRuntime` is injected, non-streaming `send_message()` sends
-only `READ_ONLY` schemas to Ollama. Model requests are checked again against the
-registry and risk before the executor runs them. Successful execution temporarily
-moves `PROCESSING -> TOOL_RUNNING -> PROCESSING`; its JSON result is sent back to
-Ollama as a transient tool message until a final assistant answer is returned.
+`READ_ONLY` schemas to Ollama. If and only if a `ToolApprovalHandler` is also
+injected, it additionally sends `MODIFY` schemas. Model requests are checked
+again against the registry and risk before the executor runs them. Successful
+execution temporarily moves `PROCESSING -> TOOL_RUNNING -> PROCESSING`; its JSON
+result is sent back to Ollama as a transient tool message until a final assistant
+answer is returned.
+
+For a model-requested `MODIFY` call, the desktop bridge synchronously asks on the
+Qt GUI thread while the chat worker waits. Approval is valid for that call only.
+Closing the dialog or application denies the request. A denial executes nothing,
+does not enter `TOOL_RUNNING`, and returns only the transient tool result
+`{"status":"declined_by_user"}` to Ollama. Approval events and preferences are
+not persisted. `DESTRUCTIVE` schemas are never exposed and destructive calls are
+rejected before execution.
 
 Tool-call rounds, calls per response, transient result text, and the context
 snapshot are all bounded. The final successful result updates the ephemeral
@@ -204,17 +219,62 @@ planner messages, tool results, schemas, system prompts, and runtime state are
 never conversation rows: PostgreSQL stores one user message and one final
 assistant message only.
 
-Phase 2 v1 orchestration intentionally applies only to non-streaming
-`send_message()`. Streaming tool orchestration and UI-mediated MODIFY approval
-are deferred.
+Tool orchestration intentionally applies only to non-streaming `send_message()`.
+The existing streaming API remains available, but streaming tool orchestration
+is deferred.
 
 ## Tool safety boundaries
 
-Only `READ_ONLY` tools are exposed to Ollama. `MODIFY` remains approval-gated,
-`DESTRUCTIVE` remains denied, and no destructive tools exist. There are no
-filesystem, arbitrary command, PowerShell, process-termination, network, or
-automation tools. Production tool code accepts no arbitrary subprocess command
-and uses no `shell=True` or `os.system`.
+`READ_ONLY` tools are always eligible for Ollama. The desktop runtime may expose
+`MODIFY`, but every such call remains approval-gated. `DESTRUCTIVE` remains
+denied, and no destructive tools exist. There are no filesystem, arbitrary
+command, PowerShell, process-termination, network, or automation tools.
+Production tool code accepts no arbitrary subprocess command and uses no
+`shell=True` or `os.system`.
+
+## Phase 3 desktop product layer
+
+`build_friday_runtime()` is the composition root. Each call creates fresh
+settings-backed services and exactly one shared `AssistantStateMachine` and
+`ContextManager`. The tool executor and conversation service receive those exact
+instances. The runtime also owns the system monitor, permission service,
+`TaskService`, and `ReminderService`; importing the module performs no health
+check or database query.
+
+The PySide6 main window remains assistant-focused: a compact identity/state/model
+header, the plain-text conversation and composer, and compact CPU/RAM/GPU values.
+It has no task/reminder dashboard, recent-activity panel, charts, tool history, or
+developer diagnostics. Tasks and reminders live in a separate organizer dialog
+created only when requested from the overflow menu.
+
+Desktop chat uses non-streaming `ConversationService.send_message()` so native
+tool orchestration remains available. Conversation creation and message work run
+on a `QThread`; Enter sends, Shift+Enter inserts a newline, and one chat window
+cannot overlap generations. Model output is appended as plain text, never as
+arbitrary rich HTML. The backend streaming API remains available for non-desktop
+callers.
+
+Startup health, three-second system metrics refreshes, organizer database work,
+and 30-second reminder claims also run on workers. The GUI thread only presents
+results. Metrics jobs and reminder polls use in-progress guards, so timer ticks
+cannot queue unbounded work. Startup health failure shows Offline without
+preventing the application from opening, and UI metrics are never persisted.
+
+`TaskService` and `ReminderService` use fresh PostgreSQL sessions and return
+immutable snapshots rather than detached ORM objects. Tasks support create,
+read, list, update, start, complete, and cancel; Phase 3 never physically deletes
+user tasks. Reminders are one-time only. Claiming an enabled due reminder marks
+it fired and disabled in the same committed operation, preventing repeat
+notifications.
+
+While Friday runs, `ReminderNotifier` polls due reminders and uses
+`QSystemTrayIcon` when available, with a transient in-app fallback otherwise.
+Notification titles stay local. The desktop layer persists neither UI state,
+runtime state, metrics, tool approvals, nor notification state beyond the
+existing reminder fields.
+
+Voice, wake-word interaction, speech, screen understanding, and autonomous
+destructive actions are not implemented in Phase 3.
 
 ## Windows startup
 

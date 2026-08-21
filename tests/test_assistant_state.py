@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -227,3 +228,12 @@ def test_transition_methods_reject_invalid_target_types(target: object) -> None:
             method(target)  # type: ignore[arg-type]
 
     assert machine.get() is AssistantState.IDLE
+
+
+def test_concurrent_state_reads_are_safe() -> None:
+    machine = AssistantStateMachine()
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        states = list(executor.map(lambda _: machine.get(), range(40)))
+
+    assert states == [AssistantState.IDLE] * 40

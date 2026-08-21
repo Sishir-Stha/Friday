@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import FrozenInstanceError
 
 import pytest
@@ -125,3 +126,28 @@ def test_manager_instances_do_not_share_state() -> None:
 
     assert first_manager.get().active_module == "system"
     assert second_manager.get() == ContextSnapshot()
+
+
+def test_concurrent_update_and_read_cycles_return_consistent_snapshots() -> None:
+    manager = ContextManager()
+
+    def update_and_read(index: int) -> ContextSnapshot:
+        manager.update(
+            active_module=f"module-{index}",
+            selected_item=f"item-{index}",
+        )
+        return manager.get()
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        snapshots = list(executor.map(update_and_read, range(40)))
+
+    assert len(snapshots) == 40
+    assert all(snapshot.active_module is not None for snapshot in snapshots)
+    assert all(snapshot.selected_item is not None for snapshot in snapshots)
+    assert all(
+        snapshot.active_module.removeprefix("module-")
+        == snapshot.selected_item.removeprefix("item-")
+        for snapshot in snapshots
+        if snapshot.active_module is not None
+        and snapshot.selected_item is not None
+    )

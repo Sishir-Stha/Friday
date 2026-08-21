@@ -38,6 +38,7 @@ class RecordingConversationService(ConversationService):
         state_machine: AssistantStateMachine,
         context_manager: ContextManager | None = None,
         tool_runtime: ToolRuntime | None = None,
+        tool_approval_handler: Any | None = None,
         system_content: str = FRIDAY_SYSTEM_PROMPT,
     ) -> None:
         super().__init__(
@@ -46,6 +47,7 @@ class RecordingConversationService(ConversationService):
             state_machine=state_machine,
             context_manager=context_manager,
             tool_runtime=tool_runtime,
+            tool_approval_handler=tool_approval_handler,
         )
         self.persisted_messages: list[tuple[str, str]] = []
         self.system_content = system_content
@@ -164,6 +166,7 @@ def make_service(
     machine: AssistantStateMachine | None = None,
     context: ContextManager | None = None,
     runtime: ToolRuntime | None = None,
+    tool_approval_handler: Any | None = None,
     system_content: str = FRIDAY_SYSTEM_PROMPT,
 ) -> RecordingConversationService:
     machine = machine if machine is not None else AssistantStateMachine()
@@ -172,6 +175,7 @@ def make_service(
         state_machine=machine,
         context_manager=context,
         tool_runtime=runtime,
+        tool_approval_handler=tool_approval_handler,
         system_content=system_content,
     )
 
@@ -408,6 +412,111 @@ def test_unknown_and_modify_tools_are_rejected_before_any_handler() -> None:
         assert modify_calls == []
         assert machine.get() is AssistantState.ERROR
         assert service.persisted_messages == [("user", "unsafe")]
+
+
+def test_approval_handler_exposes_modify_and_approved_call_executes_once() -> None:
+    machine = AssistantStateMachine()
+    approvals: list[tuple[ToolDefinition, dict[str, object]]] = []
+    executions: list[dict[str, object]] = []
+    runtime = make_runtime(
+        machine,
+        modify_handler=lambda arguments: executions.append(arguments) or {"pid": 7},
+    )
+
+    def approve(tool: ToolDefinition, arguments: Any) -> bool:
+        approvals.append((tool, dict(arguments)))
+        with pytest.raises(TypeError):
+            arguments["changed"] = True
+        return True
+
+    ollama = ScriptedOllama(
+        tool_call("open_app", {"app_name": "notepad"}),
+        OllamaResponse(content="Opened Notepad."),
+    )
+    service = make_service(
+        ollama,
+        machine=machine,
+        runtime=runtime,
+        tool_approval_handler=approve,
+    )
+
+    response = service.send_message(1, "Open Notepad")
+
+    schema_names = [tool["function"]["name"] for tool in ollama.calls[0][1]]
+    assert schema_names == ["get_system_metrics", "list_allowed_apps", "open_app"]
+    assert approvals == [(runtime.registry.require("open_app"), {"app_name": "notepad"})]
+    assert executions == [{"app_name": "notepad"}]
+    assert response.content == "Opened Notepad."
+
+
+def test_declined_modify_is_transient_and_never_enters_tool_running() -> None:
+    machine = AssistantStateMachine()
+    observed_states: list[AssistantState] = []
+    executions: list[dict[str, object]] = []
+    runtime = make_runtime(
+        machine,
+        modify_handler=lambda arguments: executions.append(arguments),
+    )
+
+    def decline(tool: ToolDefinition, arguments: Any) -> bool:
+        observed_states.append(machine.get())
+        return False
+
+    ollama = ScriptedOllama(
+        tool_call("open_app", {"app_name": "notepad"}),
+        OllamaResponse(content="Okay, I did not open it."),
+    )
+    service = make_service(
+        ollama,
+        machine=machine,
+        runtime=runtime,
+        tool_approval_handler=decline,
+    )
+
+    response = service.send_message(1, "Open Notepad")
+
+    assert observed_states == [AssistantState.PROCESSING]
+    assert executions == []
+    assert ollama.calls[1][0][-1] == {
+        "role": "tool",
+        "tool_name": "open_app",
+        "content": '{"status":"declined_by_user"}',
+    }
+    assert response.content == "Okay, I did not open it."
+    assert service.persisted_messages == [
+        ("user", "Open Notepad"),
+        ("assistant", "Okay, I did not open it."),
+    ]
+
+
+def test_destructive_tool_is_never_exposed_or_executed() -> None:
+    machine = AssistantStateMachine()
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(
+            name="erase_everything",
+            description="A destructive test tool.",
+            category="system",
+            risk=ToolRisk.DESTRUCTIVE,
+        )
+    )
+    executions: list[dict[str, object]] = []
+    executor = ToolExecutor(registry=registry, state_machine=machine)
+    executor.bind("erase_everything", lambda arguments: executions.append(arguments))
+    runtime = ToolRuntime(registry=registry, executor=executor)
+    ollama = ScriptedOllama(tool_call("erase_everything"))
+    service = make_service(
+        ollama,
+        machine=machine,
+        runtime=runtime,
+        tool_approval_handler=lambda tool, arguments: True,
+    )
+
+    with pytest.raises(ToolOrchestrationError, match="destructive"):
+        service.send_message(1, "unsafe")
+
+    assert ollama.calls[0][1] == []
+    assert executions == []
 
 
 def test_handler_exception_is_not_wrapped_and_leaves_error() -> None:

@@ -1,4 +1,5 @@
 from enum import Enum
+from threading import RLock
 
 
 class AssistantState(str, Enum):
@@ -90,30 +91,38 @@ class AssistantStateMachine:
     """Maintain Friday's current runtime state in memory."""
 
     def __init__(self) -> None:
+        self._lock = RLock()
         self._state = AssistantState.IDLE
 
     def get(self) -> AssistantState:
-        return self._state
+        with self._lock:
+            return self._state
 
     def can_transition(self, target: AssistantState) -> bool:
-        self._validate_target(target)
-        return target is self._state or target in _ALLOWED_TRANSITIONS[self._state]
-
-    def transition(self, target: AssistantState) -> AssistantState:
-        self._validate_target(target)
-
-        if not self.can_transition(target):
-            raise InvalidStateTransition(
-                "Invalid assistant state transition: "
-                f"{self._state.value} -> {target.value}"
+        with self._lock:
+            self._validate_target(target)
+            return (
+                target is self._state
+                or target in _ALLOWED_TRANSITIONS[self._state]
             )
 
-        self._state = target
-        return self._state
+    def transition(self, target: AssistantState) -> AssistantState:
+        with self._lock:
+            self._validate_target(target)
+
+            if not self.can_transition(target):
+                raise InvalidStateTransition(
+                    "Invalid assistant state transition: "
+                    f"{self._state.value} -> {target.value}"
+                )
+
+            self._state = target
+            return self._state
 
     def reset(self) -> AssistantState:
-        self._state = AssistantState.IDLE
-        return self._state
+        with self._lock:
+            self._state = AssistantState.IDLE
+            return self._state
 
     @staticmethod
     def _validate_target(target: AssistantState) -> None:
