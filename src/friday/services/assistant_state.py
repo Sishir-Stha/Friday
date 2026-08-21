@@ -21,6 +21,7 @@ _ALLOWED_TRANSITIONS: dict[AssistantState, frozenset[AssistantState]] = {
         {
             AssistantState.LISTENING,
             AssistantState.PROCESSING,
+            AssistantState.TOOL_RUNNING,
             AssistantState.OFFLINE,
             AssistantState.ERROR,
         }

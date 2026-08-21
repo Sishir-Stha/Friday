@@ -97,6 +97,7 @@ def test_can_transition_reports_valid_and_invalid_targets() -> None:
             {
                 AssistantState.LISTENING,
                 AssistantState.PROCESSING,
+                AssistantState.TOOL_RUNNING,
                 AssistantState.OFFLINE,
                 AssistantState.ERROR,
             },

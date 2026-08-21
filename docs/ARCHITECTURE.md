@@ -128,10 +128,27 @@ Friday has a lightweight in-memory registry for tool metadata. An immutable
 are independent and support deterministic discovery, lookup, registration, and
 removal; duplicate names are rejected.
 
-The registry contains no executable callbacks and does not run tools.
-`PermissionService` is not integrated, and neither `ConversationService` nor
-Ollama can invoke registered tools. Tool definitions are not persisted to
-PostgreSQL.
+The registry contains no executable callbacks. Handler bindings live separately
+inside each `ToolExecutor`, preventing metadata lookup from bypassing the
+permission boundary. Duplicate metadata and handler bindings are rejected.
+
+## Tool permissions and execution
+
+`PermissionService` is stateless and applies a deterministic risk policy to each
+call. `READ_ONLY` tools are allowed, `MODIFY` tools require explicit approval for
+that call, and `DESTRUCTIVE` tools are denied even with approval at this stage.
+There are no stored approval preferences.
+
+`ToolExecutor` resolves registry metadata and verifies a handler before checking
+permission. It validates and copies argument mappings, enters `TOOL_RUNNING`
+only after authorization, and invokes the separately bound Python handler.
+Successful calls restore the prior allowed state (`IDLE`, `PROCESSING`, or
+`STREAMING`). A handler failure leaves the assistant in `ERROR`, and the original
+handler exception propagates unchanged.
+
+No real operating-system tools exist yet. `ConversationService` and Ollama cannot
+invoke tools, and definitions, bindings, decisions, and results are not persisted
+to PostgreSQL.
 
 ## Windows startup
 
