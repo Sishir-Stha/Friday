@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from threading import RLock
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,10 +22,12 @@ class ContextManager:
     """Maintain Friday's ephemeral runtime context in memory."""
 
     def __init__(self) -> None:
+        self._lock = RLock()
         self._snapshot = ContextSnapshot()
 
     def get(self) -> ContextSnapshot:
-        return self._snapshot
+        with self._lock:
+            return self._snapshot
 
     def update(
         self,
@@ -35,37 +38,39 @@ class ContextManager:
         current_conversation_id: int | None | _UnsetType = _UNSET,
         recent_tool_result: str | None | _UnsetType = _UNSET,
     ) -> ContextSnapshot:
-        current = self._snapshot
+        with self._lock:
+            current = self._snapshot
 
-        next_snapshot = ContextSnapshot(
-            active_module=self._normalize_string(
-                active_module,
-                current.active_module,
-            ),
-            active_window=self._normalize_string(
-                active_window,
-                current.active_window,
-            ),
-            selected_item=self._normalize_string(
-                selected_item,
-                current.selected_item,
-            ),
-            current_conversation_id=self._normalize_conversation_id(
-                current_conversation_id,
-                current.current_conversation_id,
-            ),
-            recent_tool_result=self._normalize_string(
-                recent_tool_result,
-                current.recent_tool_result,
-            ),
-        )
+            next_snapshot = ContextSnapshot(
+                active_module=self._normalize_string(
+                    active_module,
+                    current.active_module,
+                ),
+                active_window=self._normalize_string(
+                    active_window,
+                    current.active_window,
+                ),
+                selected_item=self._normalize_string(
+                    selected_item,
+                    current.selected_item,
+                ),
+                current_conversation_id=self._normalize_conversation_id(
+                    current_conversation_id,
+                    current.current_conversation_id,
+                ),
+                recent_tool_result=self._normalize_string(
+                    recent_tool_result,
+                    current.recent_tool_result,
+                ),
+            )
 
-        self._snapshot = next_snapshot
-        return next_snapshot
+            self._snapshot = next_snapshot
+            return next_snapshot
 
     def clear(self) -> ContextSnapshot:
-        self._snapshot = ContextSnapshot()
-        return self._snapshot
+        with self._lock:
+            self._snapshot = ContextSnapshot()
+            return self._snapshot
 
     @staticmethod
     def _normalize_string(

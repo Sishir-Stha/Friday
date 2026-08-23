@@ -33,7 +33,23 @@ deferred, and destructive tools are not implemented.
 
 ## Phase 3 — Desktop Assistant Product
 
-Status: PLANNED
+Status: COMPLETE
+
+- [x] Desktop runtime composition
+- [x] Minimal assistant-focused main UI
+- [x] Responsive chat workflow
+- [x] Live assistant/system status
+- [x] UI-mediated MODIFY approval
+- [x] Task management
+- [x] Reminder management
+- [x] Reminder notifications
+- [x] Desktop smoke/integration verification
+
+Phase 3 provides the desktop product layer with manual per-call MODIFY approval.
+Chat runs asynchronously so the Qt UI remains responsive. Tasks and one-time
+reminders are stored in PostgreSQL and managed in an on-demand organizer window.
+Voice, wake-word interaction, screen understanding, autonomous destructive
+actions, and advanced automation remain outside Phase 3.
 
 ## Phase 4 — Voice & Advanced Interaction
 

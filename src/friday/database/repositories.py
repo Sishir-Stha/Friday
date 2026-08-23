@@ -1,9 +1,10 @@
+from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy.orm import Session
 
-from friday.database.models import Conversation, Memory, Message
+from friday.database.models import Conversation, Memory, Message, Reminder, Task
 
 
 class ConversationRepository:
@@ -156,3 +157,169 @@ class MemoryRepository:
         self.session.flush()
 
         return memory
+
+
+class TaskRepository:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def create_task(
+        self,
+        *,
+        title: str,
+        description: str | None,
+        priority: int,
+        due_at: datetime | None,
+    ) -> Task:
+        task = Task(
+            title=title,
+            description=description,
+            status="open",
+            priority=priority,
+            due_at=due_at,
+        )
+        self.session.add(task)
+        self.session.flush()
+        return task
+
+    def get_task(self, task_id: int) -> Task | None:
+        return self.session.get(Task, task_id)
+
+    def list_tasks(
+        self,
+        *,
+        status: str | None,
+        limit: int,
+    ) -> list[Task]:
+        statement = select(Task)
+        if status is not None:
+            statement = statement.where(Task.status == status)
+
+        unfinished_first = case(
+            (Task.status.in_(("open", "in_progress")), 0),
+            else_=1,
+        )
+        statement = statement.order_by(
+            unfinished_first,
+            Task.due_at.asc().nulls_last(),
+            Task.priority.desc(),
+            Task.created_at.desc(),
+            Task.id.desc(),
+        ).limit(limit)
+        return list(self.session.scalars(statement).all())
+
+    def update_task(
+        self,
+        task_id: int,
+        *,
+        title: str,
+        description: str | None,
+        priority: int,
+        due_at: datetime | None,
+    ) -> Task | None:
+        task = self.get_task(task_id)
+        if task is None:
+            return None
+
+        task.title = title
+        task.description = description
+        task.priority = priority
+        task.due_at = due_at
+        self.session.flush()
+        return task
+
+    def set_task_status(
+        self,
+        task_id: int,
+        *,
+        status: str,
+        completed_at: datetime | None,
+    ) -> Task | None:
+        task = self.get_task(task_id)
+        if task is None:
+            return None
+
+        task.status = status
+        task.completed_at = completed_at
+        self.session.flush()
+        return task
+
+
+class ReminderRepository:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def create_reminder(
+        self,
+        *,
+        title: str,
+        remind_at: datetime,
+        recurrence: str | None,
+        task_id: int | None,
+    ) -> Reminder:
+        reminder = Reminder(
+            title=title,
+            remind_at=remind_at,
+            recurrence=recurrence,
+            task_id=task_id,
+            is_enabled=True,
+        )
+        self.session.add(reminder)
+        self.session.flush()
+        return reminder
+
+    def get_reminder(self, reminder_id: int) -> Reminder | None:
+        return self.session.get(Reminder, reminder_id)
+
+    def task_exists(self, task_id: int) -> bool:
+        return self.session.get(Task, task_id) is not None
+
+    def list_upcoming(self, *, limit: int) -> list[Reminder]:
+        statement = (
+            select(Reminder)
+            .where(
+                Reminder.is_enabled.is_(True),
+                Reminder.fired_at.is_(None),
+            )
+            .order_by(Reminder.remind_at.asc(), Reminder.id.asc())
+            .limit(limit)
+        )
+        return list(self.session.scalars(statement).all())
+
+    def set_enabled(
+        self,
+        reminder_id: int,
+        *,
+        enabled: bool,
+    ) -> Reminder | None:
+        reminder = self.get_reminder(reminder_id)
+        if reminder is None:
+            return None
+
+        reminder.is_enabled = enabled
+        self.session.flush()
+        return reminder
+
+    def claim_due(
+        self,
+        *,
+        now: datetime,
+        limit: int,
+    ) -> list[Reminder]:
+        statement = (
+            select(Reminder)
+            .where(
+                Reminder.is_enabled.is_(True),
+                Reminder.remind_at <= now,
+                Reminder.fired_at.is_(None),
+            )
+            .order_by(Reminder.remind_at.asc(), Reminder.id.asc())
+            .limit(limit)
+            .with_for_update(skip_locked=True)
+        )
+        reminders = list(self.session.scalars(statement).all())
+        for reminder in reminders:
+            reminder.fired_at = now
+            reminder.is_enabled = False
+        self.session.flush()
+        return reminders
