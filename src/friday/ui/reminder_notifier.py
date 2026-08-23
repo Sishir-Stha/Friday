@@ -34,6 +34,7 @@ class _ReminderClaimWorker(QObject):
 
 class ReminderNotifier(QObject):
     fallback_notification = Signal(str)
+    became_idle = Signal()
 
     def __init__(
         self,
@@ -45,6 +46,7 @@ class ReminderNotifier(QObject):
         super().__init__(parent)
         self._reminder_service = reminder_service
         self._in_progress = False
+        self._shutdown_requested = False
         self._thread: QThread | None = None
         self._worker: _ReminderClaimWorker | None = None
         self._tray: QSystemTrayIcon | None = None
@@ -66,9 +68,13 @@ class ReminderNotifier(QObject):
         if auto_start:
             self.timer.start()
 
+    @property
+    def has_active_worker(self) -> bool:
+        return self._thread is not None
+
     @Slot()
     def poll_now(self) -> None:
-        if self._in_progress:
+        if self._shutdown_requested or self._in_progress:
             return
         self._in_progress = True
         thread = QThread(self)
@@ -107,8 +113,13 @@ class ReminderNotifier(QObject):
         self._thread = None
         self._worker = None
         self._in_progress = False
+        self.became_idle.emit()
 
-    def stop(self) -> None:
+    def begin_shutdown(self) -> None:
+        self._shutdown_requested = True
         self.timer.stop()
         if self._tray is not None:
             self._tray.hide()
+
+    def stop(self) -> None:
+        self.begin_shutdown()

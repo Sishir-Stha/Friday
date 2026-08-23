@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from threading import Event
 from time import monotonic, sleep
 
 from friday.services.reminder_service import ReminderSnapshot
@@ -108,6 +109,23 @@ class FakeReminders:
         return True
 
 
+class BlockingTasks(FakeTasks):
+    def __init__(self, gate: Event) -> None:
+        super().__init__()
+        self.gate = gate
+        self.list_calls = 0
+        self.create_calls = 0
+
+    def list(self) -> list[TaskSnapshot]:
+        self.list_calls += 1
+        self.gate.wait(timeout=1)
+        return super().list()
+
+    def create(self, title: str, **kwargs: object) -> TaskSnapshot:
+        self.create_calls += 1
+        return super().create(title, **kwargs)
+
+
 def _wait(qapp: object, condition: Callable[[], bool]) -> None:
     deadline = monotonic() + 3
     while not condition() and monotonic() < deadline:
@@ -181,4 +199,26 @@ def test_service_failure_is_shown_safely(qapp: object) -> None:
         "The organizer could not complete that action."
     )
     assert "private" not in window.error_label.text()
+    window.close()
+
+
+def test_shutdown_prevents_new_database_operations(qapp: object) -> None:
+    gate = Event()
+    tasks = BlockingTasks(gate)
+    window = OrganizerWindow(tasks, FakeReminders(), auto_refresh=False)
+    window.refresh_tasks()
+    _wait(qapp, lambda: tasks.list_calls == 1)
+
+    assert window.has_active_worker
+    window.begin_shutdown()
+    window.refresh_tasks()
+    window.task_title.setText("must not create")
+    window.add_task()
+    assert tasks.list_calls == 1
+    assert tasks.create_calls == 0
+    assert not window.add_task_button.isEnabled()
+
+    gate.set()
+    _wait(qapp, lambda: not window.has_active_worker)
+    assert not window.refresh_tasks_button.isEnabled()
     window.close()

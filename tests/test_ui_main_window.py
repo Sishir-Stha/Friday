@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from threading import Event
 from time import monotonic, sleep
 from types import SimpleNamespace
 
@@ -13,18 +14,44 @@ from friday.ui.main_window import FridayMainWindow
 
 
 class FakeConversation:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        gate: Event | None = None,
+        health_gate: Event | None = None,
+    ) -> None:
+        self.gate = gate
+        self.started = Event()
+        self.health_started = Event()
+
+        def health_check() -> object:
+            self.health_started.set()
+            if health_gate is not None:
+                health_gate.wait(timeout=1)
+            return object()
+
         self.ollama = SimpleNamespace(health_check=lambda: object())
+        self.ollama.health_check = health_check
 
     def create_conversation(self, title: str | None = None) -> int:
         return 1
 
     def send_message(self, conversation_id: int, content: str) -> OllamaResponse:
+        self.started.set()
+        if self.gate is not None:
+            self.gate.wait(timeout=1)
         return OllamaResponse("ok")
 
 
 class FakeMonitor:
+    def __init__(self, gate: Event | None = None) -> None:
+        self.gate = gate
+        self.started = Event()
+
     def get_system_metrics(self) -> SystemMetricsSnapshot:
+        self.started.set()
+        if self.gate is not None:
+            self.gate.wait(timeout=1)
         return SystemMetricsSnapshot(0, 0, 0, 0, 0, ())
 
 
@@ -41,12 +68,16 @@ class FakeReminderService:
         return []
 
 
-def _runtime() -> SimpleNamespace:
+def _runtime(
+    *,
+    conversation: FakeConversation | None = None,
+    monitor: FakeMonitor | None = None,
+) -> SimpleNamespace:
     return SimpleNamespace(
         settings=SimpleNamespace(ai_mode="local", ollama_model="test-model"),
         state_machine=AssistantStateMachine(),
-        conversation_service=FakeConversation(),
-        system_monitor=FakeMonitor(),
+        conversation_service=conversation or FakeConversation(),
+        system_monitor=monitor or FakeMonitor(),
         task_service=FakeTaskService(),
         reminder_service=FakeReminderService(),
     )
@@ -139,3 +170,87 @@ def test_startup_health_failure_sets_offline_without_blocking_window(
     assert window.isVisible()
     assert window.state_label.text() == "Offline"
     window.close()
+
+
+def test_close_without_active_workers_is_immediate(qapp: object) -> None:
+    window = FridayMainWindow(_runtime(), start_background_workers=False)
+    window.show()
+    qapp.processEvents()  # type: ignore[attr-defined]
+
+    window.close()
+    qapp.processEvents()  # type: ignore[attr-defined]
+
+    assert not window.isVisible()
+    assert window._shutdown_requested
+
+
+def test_close_waits_for_active_chat_then_closes_automatically(
+    qapp: object,
+) -> None:
+    gate = Event()
+    conversation = FakeConversation(gate=gate)
+    window = FridayMainWindow(
+        _runtime(conversation=conversation),
+        start_background_workers=False,
+    )
+    window.show()
+    window.chat_widget.composer.setPlainText("hello")
+    window.chat_widget.send_current_message()
+    _wait(qapp, conversation.started.is_set)
+
+    window.close()
+    qapp.processEvents()  # type: ignore[attr-defined]
+
+    assert window.isVisible()
+    assert window.chat_widget.has_active_worker
+    assert not window.chat_widget.composer.isEnabled()
+    assert window.statusBar().currentMessage() == (
+        "Finishing current background operation..."
+    )
+
+    gate.set()
+    _wait(qapp, lambda: not window.isVisible())
+    assert not window.chat_widget.has_active_worker
+
+
+def test_close_waits_for_active_metrics_then_closes_automatically(
+    qapp: object,
+) -> None:
+    gate = Event()
+    monitor = FakeMonitor(gate)
+    window = FridayMainWindow(
+        _runtime(monitor=monitor),
+        start_background_workers=False,
+    )
+    window.show()
+    window.system_status.refresh_now()
+    _wait(qapp, monitor.started.is_set)
+
+    window.close()
+    qapp.processEvents()  # type: ignore[attr-defined]
+
+    assert window.isVisible()
+    assert window.system_status.has_active_worker
+    gate.set()
+    _wait(qapp, lambda: not window.isVisible())
+    assert not window.system_status.has_active_worker
+
+
+def test_close_waits_for_startup_health_worker(qapp: object) -> None:
+    gate = Event()
+    conversation = FakeConversation(health_gate=gate)
+    window = FridayMainWindow(
+        _runtime(conversation=conversation),
+        start_background_workers=False,
+    )
+    window.show()
+    window._start_health_check()
+    _wait(qapp, conversation.health_started.is_set)
+
+    window.close()
+    assert window.isVisible()
+    assert window._health_thread is not None
+
+    gate.set()
+    _wait(qapp, lambda: not window.isVisible())
+    assert window._health_thread is None

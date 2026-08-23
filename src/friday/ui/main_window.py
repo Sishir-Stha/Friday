@@ -74,6 +74,8 @@ class FridayMainWindow(QMainWindow):
         self._health_thread: QThread | None = None
         self._health_worker: _HealthWorker | None = None
         self._health_offline = False
+        self._shutdown_requested = False
+        self._close_retry_scheduled = False
 
         self.setWindowTitle("Friday")
         self.resize(920, 680)
@@ -146,6 +148,9 @@ class FridayMainWindow(QMainWindow):
                 10_000,
             )
         )
+        self.chat_widget.became_idle.connect(self._worker_became_idle)
+        self.system_status.became_idle.connect(self._worker_became_idle)
+        self.reminder_notifier.became_idle.connect(self._worker_became_idle)
 
         self.setStyleSheet(_STYLE_SHEET)
         if start_background_workers:
@@ -163,19 +168,22 @@ class FridayMainWindow(QMainWindow):
 
     @Slot()
     def open_organizer(self) -> None:
+        if self._shutdown_requested:
+            return
         if self.organizer is None:
             self.organizer = OrganizerWindow(
                 self.runtime.task_service,
                 self.runtime.reminder_service,
                 self,
             )
+            self.organizer.became_idle.connect(self._worker_became_idle)
         self.organizer.show()
         self.organizer.raise_()
         self.organizer.activateWindow()
 
     @Slot()
     def _start_health_check(self) -> None:
-        if self._health_thread is not None:
+        if self._shutdown_requested or self._health_thread is not None:
             return
         thread = QThread(self)
         worker = _HealthWorker(
@@ -209,13 +217,56 @@ class FridayMainWindow(QMainWindow):
     def _health_finished(self) -> None:
         self._health_thread = None
         self._health_worker = None
+        self._worker_became_idle()
 
-    def closeEvent(self, event: QCloseEvent) -> None:
+    @Slot()
+    def _worker_became_idle(self) -> None:
+        if (
+            self._shutdown_requested
+            and not self._has_active_workers()
+            and not self._close_retry_scheduled
+        ):
+            self._close_retry_scheduled = True
+            QTimer.singleShot(0, self._retry_close)
+
+    @Slot()
+    def _retry_close(self) -> None:
+        self._close_retry_scheduled = False
+        if self._shutdown_requested and not self._has_active_workers():
+            self.close()
+
+    def _has_active_workers(self) -> bool:
+        return any(
+            (
+                self.chat_widget.has_active_worker,
+                self.system_status.has_active_worker,
+                self.reminder_notifier.has_active_worker,
+                self.organizer is not None
+                and self.organizer.has_active_worker,
+                self._health_thread is not None,
+            )
+        )
+
+    def _begin_shutdown(self) -> None:
+        if self._shutdown_requested:
+            return
+        self._shutdown_requested = True
         self.state_timer.stop()
-        self.system_status.stop()
-        self.reminder_notifier.stop()
+        self.chat_widget.begin_shutdown()
+        self.system_status.begin_shutdown()
+        self.reminder_notifier.begin_shutdown()
+        if self.organizer is not None:
+            self.organizer.begin_shutdown()
+            self.organizer.hide()
         if self.approval_bridge is not None:
             self.approval_bridge.shutdown()
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        self._begin_shutdown()
+        if self._has_active_workers():
+            self.statusBar().showMessage("Finishing current background operation...")
+            event.ignore()
+            return
         super().closeEvent(event)
 
 

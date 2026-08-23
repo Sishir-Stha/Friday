@@ -111,3 +111,28 @@ def test_enter_sends_and_shift_enter_inserts_newline(qapp: object) -> None:
     assert widget.composer.toPlainText() == "line one\nline two"
     _wait(qapp, lambda: widget._thread is None)
     widget.close()
+
+
+def test_shutdown_blocks_new_send_and_active_worker_finishes(qapp: object) -> None:
+    gate = Event()
+    service = FakeConversationService(gate=gate)
+    widget = ChatWidget(service)
+    widget.composer.setPlainText("first")
+    widget.send_current_message()
+    _wait(qapp, lambda: len(service.messages) == 1)
+
+    assert widget.has_active_worker
+    widget.begin_shutdown()
+    widget.composer.setPlainText("must not send")
+    widget.send_current_message()
+    assert service.messages == [(41, "first")]
+    assert not widget.composer.isEnabled()
+    assert not widget.send_button.isEnabled()
+
+    gate.set()
+    _wait(qapp, lambda: not widget.has_active_worker)
+
+    assert "Friday\nHello" in widget.message_display.toPlainText()
+    assert not widget.composer.isEnabled()
+    assert not widget.send_button.isEnabled()
+    widget.close()

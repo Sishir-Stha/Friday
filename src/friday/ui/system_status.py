@@ -37,6 +37,8 @@ class SystemMetricsWorker(QObject):
 
 
 class SystemStatusWidget(QWidget):
+    became_idle = Signal()
+
     def __init__(
         self,
         system_monitor: SystemMonitorLike,
@@ -47,6 +49,7 @@ class SystemStatusWidget(QWidget):
         super().__init__(parent)
         self.system_monitor = system_monitor
         self._in_progress = False
+        self._shutdown_requested = False
         self._thread: QThread | None = None
         self._worker: SystemMetricsWorker | None = None
 
@@ -76,9 +79,13 @@ class SystemStatusWidget(QWidget):
     def refresh_in_progress(self) -> bool:
         return self._in_progress
 
+    @property
+    def has_active_worker(self) -> bool:
+        return self._thread is not None
+
     @Slot()
     def refresh_now(self) -> None:
-        if self._in_progress:
+        if self._shutdown_requested or self._in_progress:
             return
         self._in_progress = True
         thread = QThread(self)
@@ -117,6 +124,11 @@ class SystemStatusWidget(QWidget):
         self._thread = None
         self._worker = None
         self._in_progress = False
+        self.became_idle.emit()
+
+    def begin_shutdown(self) -> None:
+        self._shutdown_requested = True
+        self.refresh_timer.stop()
 
     def stop(self) -> None:
-        self.refresh_timer.stop()
+        self.begin_shutdown()

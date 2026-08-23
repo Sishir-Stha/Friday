@@ -72,6 +72,8 @@ class ChatWorker(QObject):
 
 
 class ChatWidget(QWidget):
+    became_idle = Signal()
+
     def __init__(
         self,
         conversation_service: ConversationServiceLike,
@@ -81,6 +83,7 @@ class ChatWidget(QWidget):
         self.conversation_service = conversation_service
         self.conversation_id: int | None = None
         self._busy = False
+        self._shutdown_requested = False
         self._thread: QThread | None = None
         self._worker: ChatWorker | None = None
 
@@ -113,10 +116,19 @@ class ChatWidget(QWidget):
     def is_busy(self) -> bool:
         return self._busy
 
+    @property
+    def has_active_worker(self) -> bool:
+        return self._thread is not None
+
     @Slot()
     def send_current_message(self) -> None:
         content = self.composer.toPlainText().strip()
-        if self._busy or self._thread is not None or not content:
+        if (
+            self._shutdown_requested
+            or self._busy
+            or self._thread is not None
+            or not content
+        ):
             return
 
         self._append_message("You", content)
@@ -157,9 +169,15 @@ class ChatWidget(QWidget):
         self._thread = None
         self._worker = None
         self._set_busy(False)
+        self.became_idle.emit()
+
+    def begin_shutdown(self) -> None:
+        self._shutdown_requested = True
+        self.send_button.setEnabled(False)
+        self.composer.setEnabled(False)
 
     def new_chat(self) -> bool:
-        if self._busy:
+        if self._shutdown_requested or self._busy:
             return False
         self.conversation_id = None
         self.message_display.clear()
@@ -173,7 +191,8 @@ class ChatWidget(QWidget):
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
-        self.send_button.setEnabled(not busy)
-        self.composer.setEnabled(not busy)
-        if not busy:
+        enabled = not busy and not self._shutdown_requested
+        self.send_button.setEnabled(enabled)
+        self.composer.setEnabled(enabled)
+        if enabled:
             self.composer.setFocus()

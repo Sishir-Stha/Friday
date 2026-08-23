@@ -49,6 +49,8 @@ class _ServiceWorker(QObject):
 
 
 class OrganizerWindow(QDialog):
+    became_idle = Signal()
+
     def __init__(
         self,
         task_service: TaskService,
@@ -60,6 +62,7 @@ class OrganizerWindow(QDialog):
         super().__init__(parent)
         self.task_service = task_service
         self.reminder_service = reminder_service
+        self._shutdown_requested = False
         self._thread: QThread | None = None
         self._worker: _ServiceWorker | None = None
         self._success_handler: Callable[[object], None] | None = None
@@ -81,6 +84,10 @@ class OrganizerWindow(QDialog):
 
         if auto_refresh:
             self.refresh_tasks()
+
+    @property
+    def has_active_worker(self) -> bool:
+        return self._thread is not None
 
     def _build_tasks_tab(self) -> QWidget:
         tab = QWidget()
@@ -258,7 +265,7 @@ class OrganizerWindow(QDialog):
         action: Callable[[], object],
         on_success: Callable[[object], None],
     ) -> None:
-        if self._thread is not None:
+        if self._shutdown_requested or self._thread is not None:
             return
         self.error_label.clear()
         self._success_handler = on_success
@@ -296,11 +303,18 @@ class OrganizerWindow(QDialog):
         self._worker = None
         self._success_handler = None
         self._refresh_after = None
-        self._set_actions_enabled(True)
-        if refresh_after == "tasks":
+        self._set_actions_enabled(not self._shutdown_requested)
+        if self._shutdown_requested:
+            self.became_idle.emit()
+        elif refresh_after == "tasks":
             self.refresh_tasks()
         elif refresh_after == "reminders":
             self.refresh_reminders()
+
+    def begin_shutdown(self) -> None:
+        self._shutdown_requested = True
+        self._refresh_after = None
+        self._set_actions_enabled(False)
 
     def _render_tasks(self, result: object) -> None:
         tasks = result if isinstance(result, list) else []
